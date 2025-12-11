@@ -80,19 +80,30 @@ def render_processor(db_manager):
 
     st.markdown("### 📝 Classificar Itens")
 
-    # Converte itens do parser em DataFrame para facilitar edição
     itens_raw = data.get("itens", [])
-    df_itens = pd.DataFrame(itens_raw)
+df_itens = pd.DataFrame(itens_raw)
 
-    if df_itens.empty:
-        st.warning("Nenhum item identificado na nota.")
-        return
+if df_itens.empty:
+    st.warning("Nenhum item identificado na nota.")
+    return
 
-    # Colunas esperadas: item, qtd, un, vl_unit, valor
-    df_itens["Categoria"] = df_itens["item"].apply(
-        lambda nome: core_manager.categorize_item(str(nome))
-    )
+# ---- NOVO: função que usa memória + fallback ----
+def sugerir_categoria(nome_item: str) -> str:
+    if not nome_item:
+        return "Geral"
 
+    # 1) Tenta memória no banco
+    learned = db_manager.get_learned_category(nome_item)
+    if learned:
+        return learned
+
+    # 2) Se não tiver memória, usa o palpite padrão
+    return core_manager.categorize_item(nome_item)
+
+# Usa a função acima para preencher a coluna Categoria
+df_itens["Categoria"] = df_itens["item"].apply(
+    lambda nome: sugerir_categoria(str(nome))
+)
     # --- FORM de edição + salvamento ---
     with st.form("form_editar_nota"):
         # Cabeçalho visual
@@ -190,3 +201,4 @@ def render_processor(db_manager):
             st.rerun()
         else:
             st.error("Erro ao salvar nota. Tente novamente.")
+
