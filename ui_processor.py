@@ -81,29 +81,49 @@ def render_processor(db_manager):
     st.markdown("### 📝 Classificar Itens")
 
     itens_raw = data.get("itens", [])
-df_itens = pd.DataFrame(itens_raw)
+    df_itens = pd.DataFrame(itens_raw)
 
-if df_itens.empty:
-    st.warning("Nenhum item identificado na nota.")
-    return
+    if df_itens.empty:
+        st.warning("Nenhum item identificado na nota.")
+        return
 
-# ---- NOVO: função que usa memória + fallback ----
-def sugerir_categoria(nome_item: str) -> str:
-    if not nome_item:
-        return "Geral"
+    # ---- NOVO: função que usa memória + fallback ----
+    def sugerir_categoria(nome_item: str) -> str:
+        if not nome_item:
+            return "Geral"
 
-    # 1) Tenta memória no banco
-    learned = db_manager.get_learned_category(nome_item)
-    if learned:
-        return learned
+        # 1) Tenta memória no banco
+        learned = db_manager.get_learned_category(nome_item)
+        if learned:
+            return learned
 
-    # 2) Se não tiver memória, usa o palpite padrão
-    return core_manager.categorize_item(nome_item)
+        # 2) Se não tiver memória, usa o palpite padrão
+        return core_manager.categorize_item(nome_item)
 
-# Usa a função acima para preencher a coluna Categoria
-df_itens["Categoria"] = df_itens["item"].apply(
-    lambda nome: sugerir_categoria(str(nome))
-)
+    # Usa a função acima para preencher a coluna Categoria
+    itens_raw = data.get("itens", [])
+    df_itens = pd.DataFrame(itens_raw)
+
+    if df_itens.empty:
+        st.warning("Nenhum item identificado na nota.")
+        return
+
+    # ---- função que usa memória + fallback ----
+    def sugerir_categoria(nome_item: str) -> str:
+        if not nome_item:
+            return "Geral"
+
+        learned = db_manager.get_learned_category(nome_item)
+        if learned:
+            return learned
+
+        return core_manager.categorize_item(nome_item)
+
+    # Usa a função acima para preencher a coluna Categoria
+    df_itens["Categoria"] = df_itens["item"].apply(
+        lambda nome: sugerir_categoria(str(nome))
+    )
+
     # --- FORM de edição + salvamento ---
     with st.form("form_editar_nota"):
         # Cabeçalho visual
@@ -142,14 +162,17 @@ df_itens["Categoria"] = df_itens["item"].apply(
                 label_visibility="collapsed",
             )
 
-            # Sugestão de categoria
             categorias_opcoes = [
                 "Hortifruti", "Carnes", "Bebidas",
                 "Padaria", "Limpeza", "Higiene", "Geral",
             ]
             cat_sugerida = row["Categoria"] if row.get("Categoria") else "Geral"
-            idx_cat = categorias_opcoes.index(cat_sugerida) if cat_sugerida in categorias_opcoes else len(categorias_opcoes) - 1
-            
+            idx_cat = (
+                categorias_opcoes.index(cat_sugerida)
+                if cat_sugerida in categorias_opcoes
+                else len(categorias_opcoes) - 1
+            )
+
             categoria_escolhida = c4.selectbox(
                 "Categoria",
                 categorias_opcoes,
@@ -158,11 +181,8 @@ df_itens["Categoria"] = df_itens["item"].apply(
                 label_visibility="collapsed",
             )
 
-
             total_nota += valor_item
 
-            # Aqui você poderia dividir entre Kristian e Giulia (regra que já tiver)
-            # Exemplo simples: 50/50
             valor_k = round(valor_item / 2.0, 2)
             valor_g = round(valor_item - valor_k, 2)
 
@@ -176,7 +196,6 @@ df_itens["Categoria"] = df_itens["item"].apply(
                 }
             )
 
-        # --- Resumo da nota ---
         st.markdown("---")
         col_res1, col_res2, col_res3 = st.columns(3)
         col_res1.metric("Total da Nota", f"R$ {total_nota:.2f}")
@@ -190,23 +209,18 @@ df_itens["Categoria"] = df_itens["item"].apply(
         sucesso = db_manager.save_invoice(
             data_formatada_str,
             data.get("loja", "Loja não identificada"),
-            total_nota,
+            float(total_nota),
             pagador_final,
             data.get("forma_pagamento", "Indefinido"),
             itens_processados,
         )
 
         if sucesso:
-            # Aprendizado: salva categorias escolhidas na memória
             for item in itens_processados:
                 db_manager.learn_item(item["Item"], item["Categoria"])
 
             st.toast("Nota salva com sucesso!", icon="✅")
-
-            # Remove o PDF da fila após salvar
             os.remove(current_file_path)
             st.rerun()
         else:
             st.error("Erro ao salvar nota. Tente novamente.")
-
-
