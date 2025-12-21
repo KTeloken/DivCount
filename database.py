@@ -153,8 +153,10 @@ class DatabaseManager:
         except Exception as e:
             self.conn.rollback()
             cur.close()
-            print(f"Erro SQL: {e}")
+            import streamlit as st
+            st.error(f"Erro ao salvar nota: {e}")
             return False
+
 
     # --- SALVAR REEMBOLSO ---
     def save_reimbursement(self, pagador, recebedor, valor):
@@ -235,3 +237,4 @@ class DatabaseManager:
     def close(self):
 
         self.conn.close()
+
