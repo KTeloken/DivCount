@@ -6,9 +6,11 @@ from datetime import datetime
 from parser import InvoiceParser
 from core import ExpenseManager
 
+# Pasta onde as notas ficam esperando
 BUFFER_DIR = "notas_pendentes"
 if not os.path.exists(BUFFER_DIR):
     os.makedirs(BUFFER_DIR)
+
 
 def render_processor(db_manager):
     st.markdown("### 📥 Central de Uploads")
@@ -19,13 +21,15 @@ def render_processor(db_manager):
             "Selecione arquivos (PDF)",
             type="pdf",
             accept_multiple_files=True,
+            key="upload_pdfs",
         )
         if uploaded_files:
             for f in uploaded_files:
-                with open(os.path.join(BUFFER_DIR, f.name), "wb") as buffer:
+                save_path = os.path.join(BUFFER_DIR, f.name)
+                with open(save_path, "wb") as buffer:
                     buffer.write(f.getbuffer())
             st.success(f"{len(uploaded_files)} notas enviadas para a fila!")
-            st.rerun()
+            # NÃO usar st.rerun aqui para evitar loop; a lista de pendentes é lida logo abaixo
 
     # --- PARTE B: SELECIONAR DA FILA ---
     pendentes = [f for f in os.listdir(BUFFER_DIR) if f.lower().endswith(".pdf")]
@@ -47,7 +51,10 @@ def render_processor(db_manager):
     except Exception as e:
         st.error(f"Erro ao ler PDF: {e}")
         if st.button("🗑️ Deletar arquivo corrompido"):
-            os.remove(current_file_path)
+            try:
+                os.remove(current_file_path)
+            except Exception as del_e:
+                st.error(f"Erro ao deletar arquivo corrompido: {del_e}")
             st.rerun()
         return
 
@@ -60,7 +67,7 @@ def render_processor(db_manager):
     if data.get("data"):
         try:
             data_padrao = datetime.strptime(data["data"], "%d/%m/%Y")
-        except:
+        except Exception:
             pass
 
     nova_data = c1.date_input(
@@ -80,6 +87,7 @@ def render_processor(db_manager):
 
     st.markdown("### 📝 Classificar Itens")
 
+    # --- ITENS EM DATAFRAME ---
     itens_raw = data.get("itens", [])
     df_itens = pd.DataFrame(itens_raw)
 
@@ -87,39 +95,15 @@ def render_processor(db_manager):
         st.warning("Nenhum item identificado na nota.")
         return
 
-    # ---- NOVO: função que usa memória + fallback ----
+    # Função que usa memória + fallback (ExpenseManager)
     def sugerir_categoria(nome_item: str) -> str:
         if not nome_item:
             return "Geral"
-
-        # 1) Tenta memória no banco
         learned = db_manager.get_learned_category(nome_item)
         if learned:
             return learned
-
-        # 2) Se não tiver memória, usa o palpite padrão
         return core_manager.categorize_item(nome_item)
 
-    # Usa a função acima para preencher a coluna Categoria
-    itens_raw = data.get("itens", [])
-    df_itens = pd.DataFrame(itens_raw)
-
-    if df_itens.empty:
-        st.warning("Nenhum item identificado na nota.")
-        return
-
-    # ---- função que usa memória + fallback ----
-    def sugerir_categoria(nome_item: str) -> str:
-        if not nome_item:
-            return "Geral"
-
-        learned = db_manager.get_learned_category(nome_item)
-        if learned:
-            return learned
-
-        return core_manager.categorize_item(nome_item)
-
-    # Usa a função acima para preencher a coluna Categoria
     df_itens["Categoria"] = df_itens["item"].apply(
         lambda nome: sugerir_categoria(str(nome))
     )
@@ -181,15 +165,16 @@ def render_processor(db_manager):
                 label_visibility="collapsed",
             )
 
-            total_nota += valor_item
+            total_nota += float(valor_item)
 
-            valor_k = round(valor_item / 2.0, 2)
-            valor_g = round(valor_item - valor_k, 2)
+            # Regra simples: 50/50
+            valor_k = round(float(valor_item) / 2.0, 2)
+            valor_g = round(float(valor_item) - valor_k, 2)
 
             itens_processados.append(
                 {
                     "Item": nome_item,
-                    "Valor (R$)": valor_item,
+                    "Valor (R$)": float(valor_item),
                     "Categoria": categoria_escolhida,
                     "R$ Kristian": valor_k,
                     "R$ Giulia": valor_g,
@@ -216,11 +201,17 @@ def render_processor(db_manager):
         )
 
         if sucesso:
+            # Aprendizado: salva categorias escolhidas na memória
             for item in itens_processados:
                 db_manager.learn_item(item["Item"], item["Categoria"])
 
             st.toast("Nota salva com sucesso!", icon="✅")
-            os.remove(current_file_path)
+
+            # Remove o PDF da fila após salvar
+            try:
+                os.remove(current_file_path)
+            except Exception as e:
+                st.error(f"Erro ao deletar arquivo: {e}")
             st.rerun()
         else:
-            st.error("Erro ao salvar nota. Tente novamente.")
+            st.error("Erro ao salvar nota. Veja mensagens de erro acima.")
